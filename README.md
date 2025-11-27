@@ -14,6 +14,6 @@
 
 <br>
 
-[![Project Page](https://img.shields.io/badge/🌐_Project-Page-4A90E2?style=for-the-badge)](https://kiki-zyq.github.io/ZoomSearch/)
+[![Project Page](https://img.shields.io/badge/🌐_Project-Page-4A90E2?style=for-the-badge)](https://kiki-zyq.github.io/Zoom-Search/)
 &nbsp;&nbsp;
 [![arXiv](https://img.shields.io/badge/📄_arXiv-2511.20460-B31B1B?style=for-the-badge)](https://arxiv.org/abs/2511.20460)
