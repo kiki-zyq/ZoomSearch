@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🔍 Look Where It Matters
+# <img src="images/logo.png" alt="ZoomSearch Logo" width="45"> Look Where It Matters
 
 ### Training-Free Ultra-HR Remote Sensing VQA via Adaptive Zoom Search
 
