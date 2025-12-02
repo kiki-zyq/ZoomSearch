@@ -22,6 +22,12 @@
 <img src="images/teaser.png" alt="ZoomSearch">
 </div>
 
+<div align="center">
+
+**⭐ If you find this project helpful, please consider giving it a star!**
+
+</div>
+
 ## 🔥 News
 
 - **[2025.11.26]** We released our [arXiv paper](https://arxiv.org/abs/2511.20460) and [Project Page](https://kiki-zyq.github.io/ZoomSearch/)!
@@ -55,8 +61,9 @@ If you find this work useful, please cite our paper:
 }
 ```
 
-<div align="center">
 
-**⭐ If you find this project helpful, please consider giving it a star!**
+## 💖 Acknowledgements
 
-</div>
+We sincerely thank the teams behind **[LRS-VQA](https://github.com/VisionXLab/LRS-VQA)** and **[MME-RealWorld](https://github.com/MME-Benchmarks/MME-RealWorld)** datasets,  
+as well as **[VLMEvalKit](https://github.com/open-compass/VLMEvalKit)**, for their open-source resources that supported our research!
+
