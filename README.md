@@ -30,7 +30,7 @@
 
 ## 🔥 News
 
-- **[2025.11.26]** We released our [arXiv paper](https://arxiv.org/abs/2511.20460) and [Project Page](https://kiki-zyq.github.io/ZoomSearch/)!
+- **[2025.11.26]** We released our [arXiv paper](https://arxiv.org/abs/2511.20460) and [Project Page](https://kiki-zyq.github.io/Zoom-Search/)!
 
 ## 📖 Introduction
 
