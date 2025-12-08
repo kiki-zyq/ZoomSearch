@@ -76,7 +76,7 @@ python demo.py \
 - `--zoom`: Enable **ZoomSearch** for coarse-to-fine region localization on high-resolution images.
 - `--save_intermediate`: Save all intermediate results from zooming and retrieval.
 
-> 💡 For CLIP-family models, place the weights under `ZoomSearch/checkpoints/`.
+> 💡 For CLIP-family models, place the weights under [`ZoomSearch/checkpoints/`](checkpoints/read.md).
 
 > 💡 **Recommended:** `llava_onevision_qwen2_7b_ov` + `openbmb/VisRAG-Ret` for best performance.
 
