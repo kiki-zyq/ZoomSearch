@@ -6,6 +6,7 @@ import os.path as osp
 from ..base import BaseModel
 from ...smp import *
 import copy
+import re
 import traceback
 import warnings
 
@@ -19,7 +20,8 @@ class LLaVA(BaseModel):
 
     def __init__(self, model_path='lmms-lab/llava-onevision-qwen2-7b-ov',
                  max_step=200,
-                 bias_value=0.2, search_model_path='openbmb/VisRAG-Ret', save_intermediate=False, **kwargs):
+                 bias_value=0.2, search_model_path='openbmb/VisRAG-Ret', save_intermediate=False,
+                 root_choice_threshold=0.5, **kwargs):
         assert model_path is not None
 
         self.model_path = model_path
@@ -29,6 +31,7 @@ class LLaVA(BaseModel):
             max_step=max_step,
             bias_value=bias_value,
             search_model_path=search_model_path,
+            root_choice_threshold=root_choice_threshold,
             save_intermediate=save_intermediate
         )
 
@@ -295,6 +298,85 @@ class LLaVA(BaseModel):
             return self._generate_llava_onevision_hf(message, dataset)
         else:
             return self._generate_llava_onevision(message, dataset)
+
+    def _choice_labels(self, content):
+        matches = re.findall(r'^\s*\(?([A-Z])\)[ \t]+', content, flags=re.MULTILINE)
+        if len(set(matches)) < 2:
+            matches = re.findall(r'^\s*([A-Z])[.)][ \t]+', content, flags=re.MULTILINE)
+        labels = []
+        for label in matches:
+            if label not in labels:
+                labels.append(label)
+        return labels if len(labels) >= 2 else []
+
+    def _choice_from_output(self, output, labels):
+        choices = ''.join(re.escape(label) for label in labels)
+        value = str(output or '').strip().upper()
+        match = re.search(rf'^\(?([{choices}])\)?(?:\s|[.):,-]|$)', value)
+        if match:
+            return match.group(1)
+        match = re.search(
+            rf'\b(?:ANSWER|OPTION|CHOICE)\s*(?:IS|:)?\s*\(?([{choices}])\)?\b',
+            value,
+        )
+        return match.group(1) if match else None
+
+    @torch.no_grad()
+    def generate_with_choice_confidence(self, message, dataset=None):
+        if self.model_type != 'llava_onevision':
+            return None, None, None
+
+        content, images, image_sizes = '', [], []
+        for msg in message:
+            if msg['type'] == 'text':
+                content += msg['value']
+            else:
+                image = msg['value'] if isinstance(msg['value'], Image.Image) else Image.open(msg['value']).convert('RGB')
+                images.append(image)
+                image_sizes.append(image.size)
+
+        labels = self._choice_labels(content)
+        if not labels:
+            return None, None, None
+
+        label_text = ', '.join(labels[:-1]) + f', or {labels[-1]}'
+        content = (
+            f'{content}\nAnswer with exactly one option letter ({label_text}). '
+            'Do not include any other text.'
+        )
+        image_tensor = self.process_images(images, self.image_processor, self.model.config)
+        image_tensor = [image.to(dtype=torch.float16, device='cuda') for image in image_tensor]
+
+        conversation = copy.deepcopy(self.conv_templates[self.conv_template])
+        conversation.append_message(conversation.roles[0], self.DEFAULT_IMAGE_TOKEN + '\n' + content)
+        conversation.append_message(conversation.roles[1], None)
+        input_ids = self.tokenizer_image_token(
+            conversation.get_prompt(), self.tokenizer, self.IMAGE_TOKEN_INDEX, return_tensors='pt'
+        ).unsqueeze(0).to('cuda')
+
+        generation = self.model.generate(
+            input_ids,
+            images=image_tensor,
+            image_sizes=image_sizes,
+            do_sample=False,
+            max_new_tokens=16,
+            return_dict_in_generate=True,
+            output_scores=True,
+        )
+        output = self.tokenizer.batch_decode(generation.sequences, skip_special_tokens=True)[0].strip()
+        label_ids = []
+        for label in labels:
+            token_ids = self.tokenizer(label, add_special_tokens=False).input_ids
+            if len(token_ids) != 1:
+                return output, None, None
+            label_ids.append(token_ids[0])
+
+        logits = generation.scores[0][0, label_ids].float()
+        probabilities = torch.softmax(logits, dim=0).tolist()
+        option_probabilities = dict(zip(labels, probabilities))
+        predicted_choice = self._choice_from_output(output, labels)
+        confidence = option_probabilities.get(predicted_choice)
+        return output, confidence, option_probabilities
 
     def _generate_llava_v15(self, message, dataset=None):
         from llava.mm_utils import process_images, tokenizer_image_token, KeywordsStoppingCriteria
