@@ -10,6 +10,7 @@ import time
 import traceback
 import warnings
 import os
+import re
 
 from .layout_utils import (
     crop_image,
@@ -24,7 +25,6 @@ Based on the current image crop shown:
 - Can you see the relevant visual content needed to answer this question?
 
 Answer: Yes or No."""
-
 
 def split_image(image, crop_size):
     width, height = image.size
@@ -136,6 +136,7 @@ class BaseModel:
     def __init__(self, max_step=200, bias_value=0.2,
                  search_model_path='openbmb/VisRAG-Ret',
                  add_position_hint=True,
+                 root_choice_threshold=0.5,
                  save_intermediate=False,
                  intermediate_image_path='process_image'):
 
@@ -155,6 +156,8 @@ class BaseModel:
         self.bias_value = bias_value
         self.add_position_hint = add_position_hint
         self.keep_ratio = 0.5
+        self.root_choice_threshold = root_choice_threshold
+        self.last_zoom_used_original = False
         self._current_image_name = None
         self._intermediate_counter = 0
 
@@ -348,6 +351,18 @@ class BaseModel:
 
         return sub_regions, position_info
 
+    def _build_retrieval_query(self, query):
+        text = str(query or '').strip()
+        text = re.sub(
+            r'(?is)\n\s*(answer choices|choices|options|the choices are listed below)\s*:.*$',
+            '',
+            text
+        ).strip()
+        text = re.sub(r'(?is)\n\s*\(?[A-E]\)\s+.*$', '', text).strip()
+        text = re.sub(r'(?is)\n\s*[A-E][\.\):]\s+.*$', '', text).strip()
+        text = re.sub(r'(?is)^\s*(text|question)\s*:\s*', '', text).strip()
+        return text or str(query or '').strip()
+
     def _answer_confidence(self, query, image, bbox):
         crop = crop_image(image, bbox)
         prompt = ANSWER_PROMPT.format(query)
@@ -417,6 +432,9 @@ class BaseModel:
     def generate_inner(self, message, dataset):
         raise NotImplementedError
 
+    def generate_with_choice_confidence(self, message, dataset=None):
+        return None, None, None
+
     def check_content(self, msgs):
         if isinstance(msgs, str):
             return 'str'
@@ -450,6 +468,9 @@ class BaseModel:
         if image is None or query is None:
             return message
 
+        self.last_zoom_used_original = False
+        retrieval_query = self._build_retrieval_query(query)
+
         if image_path:
             self._current_image_name = os.path.splitext(os.path.basename(image_path))[0]
         else:
@@ -465,9 +486,9 @@ class BaseModel:
 
         if self._search_model_type == 'visrag':
             INSTRUCTION = "Represent this query for retrieving relevant documents: "
-            query_embedding = self.search_model.encode_text([INSTRUCTION + query])
+            query_embedding = self.search_model.encode_text([INSTRUCTION + retrieval_query])
         else:
-            query_embedding = self.search_model.encode_text([query])
+            query_embedding = self.search_model.encode_text([retrieval_query])
 
         img_w, img_h = image.size
         root_bbox = (0, 0, img_w, img_h)
@@ -553,7 +574,7 @@ class BaseModel:
             expanded_nodes = []
 
             for idx, (sub_bbox, retrieval_score, eroded_image) in enumerate(sub_regions):
-                answer_score = self._answer_confidence_with_image(query, eroded_image)
+                answer_score = self._answer_confidence_with_image(retrieval_query, eroded_image)
 
                 w = get_confidence_weight(cur_node.depth, self.bias_value)
                 confidence = (1. - w) * retrieval_score + w * answer_score
@@ -594,8 +615,14 @@ class BaseModel:
 
         if len(final_candidates) == 0:
             final_selected = [root_node]
+            use_original_image = True
+            new_image = image
         else:
             final_selected = select_nodes_by_sigmoid(final_candidates, threshold=0.6, max_nodes=6)
+            use_original_image = False
+            new_image = place_crops_by_grid_layout(image, final_selected)
+
+        self.last_zoom_used_original = use_original_image
 
         if self.save_intermediate:
             print(f"\n[Final Selection] {len(final_selected)} nodes selected")
@@ -608,19 +635,17 @@ class BaseModel:
                         f"{path_str}_conf{node.confidence:.3f}"
                     )
 
-        new_image = place_crops_by_grid_layout(image, final_selected)
-
         if self.save_intermediate:
             self._save_intermediate_image(new_image, "final_layout", "output")
             self.intermediate_image_path = original_intermediate_path
             print(f"[ZoomSearch] Done. Total intermediate images saved: {self._intermediate_counter}")
 
-        position_hint = self._build_position_hint()
+        position_hint = "" if use_original_image else self._build_position_hint()
 
         for mess in message:
             if mess['type'] == 'image':
                 mess['value'] = new_image
-            elif mess['type'] == 'text':
+            elif mess['type'] == 'text' and not use_original_image:
                 mess['value'] = f"{position_hint}Question:\n{mess['value']}"
 
         return message
@@ -635,6 +660,22 @@ class BaseModel:
             assert item['type'] in self.allowed_types, f'Invalid input type: {item["type"]}'
 
         if zoom:
+            self.last_zoom_used_original = False
+            root_answer, root_confidence, _ = self.generate_with_choice_confidence(
+                message, dataset
+            )
+
+            if root_confidence is not None and root_confidence >= self.root_choice_threshold:
+                self.last_zoom_used_original = True
+                return root_answer
+
             message = self.zoom_search(message)
+
+            if self.last_zoom_used_original:
+                if root_answer is not None:
+                    return root_answer
+                return self.generate_inner(message, dataset)
+
+            return self.generate_inner(message, dataset)
 
         return self.generate_inner(message, dataset)
